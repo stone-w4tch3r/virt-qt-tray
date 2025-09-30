@@ -1,5 +1,4 @@
 import unittest
-from src.vmtray import main
 
 class TestMain(unittest.TestCase):
     def test_placeholder(self) -> None:
