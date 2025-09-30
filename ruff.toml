@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["__pycache__", "*.pyc", "*.pyo", "*.pyd", "*.so", "*.egg", "*.egg-info", "dist", "build", ".git", ".pytest_cache", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "D", "UP", "PT", "S", "B", "A", "C4", "G", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "INT", "ARG", "PTH", "TD", "FIX", "ERA", "PGH", "PLC", "PLE", "PLR", "PLW", "PIE", "RUF"]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]

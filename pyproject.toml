@@ -1,0 +1,26 @@
+# pyproject.toml
+
+[project]
+name = "vmtray"
+version = "0.1.0"
+description = "A minimal system tray app for monitoring and controlling libvirt-managed VMs."
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
+license = "MIT"
+dependencies = [
+    "PyQt6",
+    "libvirt-python",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "ruff",
+    "basedpyright",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.basedpyright]
+strict = true
