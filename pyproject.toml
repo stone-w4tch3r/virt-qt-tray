@@ -17,9 +17,3 @@ dev-dependencies = [
     "basedpyright",
 ]
 
-[tool.ruff]
-line-length = 120
-target-version = "py312"
-
-[tool.basedpyright]
-strict = true
