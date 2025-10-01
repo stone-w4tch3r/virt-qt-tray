@@ -1,3 +1,9 @@
 {
-    "python.defaultInterpreterPath": "./.venv/bin/python"
+    "python.defaultInterpreterPath": "./.venv/bin/python",
+    "ruff.configuration": "./pyproject.toml",
+    "ruff.configurationPreference": "filesystemFirst",
+    "editor.formatOnSave": true,
+    "ruff.lint.enable": true,
+    "ruff.enable": true,
+    "basedpyright.analysis.extraPaths": [ "./" ],
 }

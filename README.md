@@ -2,6 +2,13 @@
 
 A simple tray application for managing libvirt virtual machines.
 
+## Icon Customisation
+
+- The tray icon follows freedesktop theming first. Set `VM_TRAY_ICON_NAME` to pick any installed icon name (for example `vm-tray`).
+- Provide a direct asset with `VM_TRAY_ICON_PATH=/path/to/icon.png` or drop a replacement SVG/PNG into the desktop icon theme; the bundled fallback lives at `assets/vm_tray_base.svg`.
+- When any VM is running the app paints a small highlight dot onto the icon so you have a quick status indicator across dark/light panels.
+- Because the app resolves the icon at runtime, you can ship distro-specific artwork without touching the codebase.
+
 # Dev setup
 
 ## Using Distrobox (Recommended)

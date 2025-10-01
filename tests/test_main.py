@@ -1,13 +1,15 @@
 # pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportInvalidCast=false
 
 import os
+import tempfile
 import unittest
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+from pathlib import Path
 import libvirt  # type: ignore[reportMissingTypeStubs]
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QIcon, QPalette, QPixmap
 from PyQt6.QtWidgets import QApplication, QStyle
 
 from src import main
@@ -171,24 +173,63 @@ class ResolveTrayIconTests(unittest.TestCase):
         pixmap.fill(Qt.GlobalColor.green)
         style_icon = QIcon(pixmap)
 
-        with patch("src.main.QIcon.fromTheme", return_value=QIcon()) as mock_from_theme:
-            style = MagicMock()
-            style.standardIcon.return_value = style_icon
-            with patch.object(_APP, "style", return_value=style):
-                resolved = main.resolve_tray_icon(_APP)
+        with patch.object(main, "BASE_ICON_FILE", Path("/nonexistent")):
+            with patch("src.main.QIcon.fromTheme", return_value=QIcon()) as mock_from_theme:
+                style = MagicMock()
+                style.standardIcon.return_value = style_icon
+                with patch.object(_APP, "style", return_value=style):
+                    resolved = main.resolve_tray_icon(_APP)
 
         self.assertTrue(mock_from_theme.called)
         style.standardIcon.assert_called_once_with(QStyle.StandardPixmap.SP_ComputerIcon)
         self.assertFalse(resolved.isNull())
 
     def test_final_fallback_creates_pixmap(self) -> None:
-        with patch("src.main.QIcon.fromTheme", return_value=QIcon()):
-            style = MagicMock()
-            style.standardIcon.return_value = QIcon()
-            with patch.object(_APP, "style", return_value=style):
-                resolved = main.resolve_tray_icon(_APP)
+        with patch.object(main, "BASE_ICON_FILE", Path("/nonexistent")):
+            with patch("src.main.QIcon.fromTheme", return_value=QIcon()):
+                style = MagicMock()
+                style.standardIcon.return_value = QIcon()
+                with patch.object(_APP, "style", return_value=style):
+                    resolved = main.resolve_tray_icon(_APP)
 
         self.assertFalse(resolved.isNull())
+
+    def test_path_override_icon(self) -> None:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.yellow)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            pixmap.save(tmp.name, "PNG")
+            temp_path = tmp.name
+
+        try:
+            with patch.dict(os.environ, {"VM_TRAY_ICON_PATH": temp_path}, clear=False):
+                icon = main.resolve_tray_icon(_APP)
+        finally:
+            os.unlink(temp_path)
+
+        self.assertFalse(icon.isNull())
+
+
+class IconWithRunningIndicatorTests(unittest.TestCase):
+    def test_indicator_draws_colored_dot(self) -> None:
+        base_pixmap = QPixmap(32, 32)
+        base_pixmap.fill(Qt.GlobalColor.lightGray)
+        base_icon = QIcon(base_pixmap)
+
+        palette = _APP.palette()
+        highlight_color = palette.color(QPalette.ColorRole.Highlight)
+        palette.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.red)
+
+        with patch.object(_APP, "palette", return_value=palette):
+            icon = main.icon_with_running_indicator(base_icon, _APP)
+
+        pixmap = icon.pixmap(32, 32)
+        image = pixmap.toImage()
+        top_right = image.pixelColor(pixmap.width() - 4, 4)
+        bottom_left = image.pixelColor(4, pixmap.height() - 4)
+        self.assertNotEqual(top_right, bottom_left)
+        # restore palette highlight
+        palette.setColor(QPalette.ColorRole.Highlight, highlight_color)
 
 
 if __name__ == "__main__":
