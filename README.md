@@ -39,3 +39,17 @@ uv sync
 uv run src/main.py
 ```
 
+
+## Running via SSH
+
+When running the application via SSH, you need to set the proper environment variables to access the graphical display:
+
+```bash
+# Get actual values from graphical session
+export DISPLAY=:0
+export WAYLAND_DISPLAY=wayland-0
+export XDG_SESSION_TYPE=wayland
+uv run src/main.py
+```
+
+This allows the PyQt application to connect to the VM's desktop session and display on the VM screen.

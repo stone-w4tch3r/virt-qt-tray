@@ -1,4 +1,6 @@
+import os
 import sys
+from collections.abc import Mapping
 from typing import TypedDict, List
 import libvirt  # type: ignore[attr-defined]  # Suppress untyped import warning
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
@@ -13,9 +15,24 @@ class VMInfo(TypedDict):
     domain: libvirt.virDomain
 
 
+def ensure_graphical_environment(env: Mapping[str, str] | None = None) -> None:
+    """Fail fast when no GUI session is available (e.g. plain SSH)."""
+    vars_to_check = env if env is not None else os.environ
+    has_x11 = bool(vars_to_check.get("DISPLAY"))
+    has_wayland = bool(vars_to_check.get("WAYLAND_DISPLAY"))
+    assert (
+        has_x11 or has_wayland
+    ), (
+        "No graphical display detected. Run inside an X11/Wayland session or enable X forwarding (e.g. ssh -X).\n"
+        "Hint: in headless session you can point QT to real screen (find values in graphical session):\n"
+        "`export DISPLAY=:0; export WAYLAND_DISPLAY=wayland-0; export XDG_SESSION_TYPE=wayland`"
+    )
+
+
 def connect_to_libvirt() -> libvirt.virConnect:
     """Establish a connection to libvirt, failing fast if unsuccessful."""
-    conn = libvirt.open("qemu:///system")
+    # conn = libvirt.open("qemu:///system")
+    conn = libvirt.open("test:///default")
     assert (
         conn is not None
     ), "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
@@ -80,6 +97,8 @@ def build_menu(vms: List[VMInfo]) -> QMenu:
 
 
 def main() -> None:
+    ensure_graphical_environment()
+
     app = QApplication(sys.argv)
 
     # Fail fast: Ensure tray is supported
