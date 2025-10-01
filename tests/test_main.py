@@ -3,15 +3,17 @@
 import os
 import unittest
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import libvirt  # type: ignore[reportMissingTypeStubs]
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import QApplication, QStyle
 
 from src import main
 
 _ = os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-_APP = QApplication.instance() or QApplication([])
+_APP = cast(QApplication, QApplication.instance() or QApplication([]))
 
 
 class DummyDomain:
@@ -149,6 +151,44 @@ class StopVmTests(unittest.TestCase):
         main.stop_vm(cast(libvirt.virDomain, domain))
 
         self.assertEqual(domain.destroy_calls, 0)
+
+
+class ResolveTrayIconTests(unittest.TestCase):
+    def test_env_override_used_when_available(self) -> None:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.blue)
+        themed_icon = QIcon(pixmap)
+
+        with patch.dict(os.environ, {"VM_TRAY_ICON_NAME": "custom-icon"}, clear=False):
+            with patch("src.main.QIcon.fromTheme", return_value=themed_icon) as mock_from_theme:
+                resolved = main.resolve_tray_icon(_APP)
+
+        mock_from_theme.assert_called_once_with("custom-icon")
+        self.assertFalse(resolved.isNull())
+
+    def test_fallback_to_style_icon_when_theme_missing(self) -> None:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.green)
+        style_icon = QIcon(pixmap)
+
+        with patch("src.main.QIcon.fromTheme", return_value=QIcon()) as mock_from_theme:
+            style = MagicMock()
+            style.standardIcon.return_value = style_icon
+            with patch.object(_APP, "style", return_value=style):
+                resolved = main.resolve_tray_icon(_APP)
+
+        self.assertTrue(mock_from_theme.called)
+        style.standardIcon.assert_called_once_with(QStyle.StandardPixmap.SP_ComputerIcon)
+        self.assertFalse(resolved.isNull())
+
+    def test_final_fallback_creates_pixmap(self) -> None:
+        with patch("src.main.QIcon.fromTheme", return_value=QIcon()):
+            style = MagicMock()
+            style.standardIcon.return_value = QIcon()
+            with patch.object(_APP, "style", return_value=style):
+                resolved = main.resolve_tray_icon(_APP)
+
+        self.assertFalse(resolved.isNull())
 
 
 if __name__ == "__main__":

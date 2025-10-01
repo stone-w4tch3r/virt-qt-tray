@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Callable, TypedDict
 
 import libvirt  # type: ignore[reportMissingTypeStubs, attr-defined]
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QStyle, QSystemTrayIcon
 
 IS_TEST: bool = os.getenv("TEST") is not None and os.getenv("TEST") != ""
 TEST_CONNECTION = f"test://{Path('tests/libvirt-test-setup.xml').resolve()}"
@@ -78,6 +78,34 @@ def _make_trigger(handler: Callable[[libvirt.virDomain], None], domain: libvirt.
     return trigger
 
 
+def resolve_tray_icon(app: QApplication) -> QIcon:
+    """Resolve a themed tray icon with fallbacks per freedesktop guidance."""
+    icon_candidates = [
+        os.getenv("VM_TRAY_ICON_NAME"),
+        "virt-manager",
+        "virtual-machine",
+        "computer",
+        "computer-symbolic",
+    ]
+
+    for name in icon_candidates:
+        if not name:
+            continue
+        themed_icon = QIcon.fromTheme(name)
+        if not themed_icon.isNull():
+            return themed_icon
+
+    style = app.style()
+    if style is not None:
+        style_icon = style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        if not style_icon.isNull():
+            return style_icon
+
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.darkGray)
+    return QIcon(pixmap)
+
+
 def build_menu(vms: list[VMInfo]) -> QMenu:
     """Build dynamic QMenu with VM names, statuses, and actions."""
     menu = QMenu()
@@ -123,7 +151,7 @@ def main() -> None:
     assert QSystemTrayIcon.isSystemTrayAvailable(), "System tray is not available on this platform."
 
     tray = QSystemTrayIcon()
-    tray.setIcon(QIcon.fromTheme("virtual-machine"))  # Use system theme icon; falls back gracefully
+    tray.setIcon(resolve_tray_icon(app))
     tray.setVisible(True)
 
     # Establish libvirt connection early
