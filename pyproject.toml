@@ -5,15 +5,38 @@ description = "A minimal system tray app for monitoring and controlling libvirt-
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 license = "MIT"
 requires-python = ">=3.12"
-dependencies = [
-    "PyQt6",
-    "libvirt-python",
-]
+dependencies = ["PyQt6", "libvirt-python"]
 
-[tool.uv]
-dev-dependencies = [
-    "pytest",
-    "ruff",
-    "basedpyright",
-]
+[dependency-groups]
+dev = ["pytest", "ruff", "basedpyright"]
 
+[tool.basedpyright]
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+typeCheckingMode = "standard"
+reportUnusedCallResult = "none"
+reportImplicitStringConcatenation = "none"
+
+[tool.ruff]
+extend-exclude = [
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    "*.so",
+    "*.egg",
+    "*.egg-info",
+    "dist",
+    "build",
+    ".git",
+    ".pytest_cache",
+    "venv",
+]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]

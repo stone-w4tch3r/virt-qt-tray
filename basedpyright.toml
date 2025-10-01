@@ -1,4 +1,0 @@
-[tool.basedpyright]
-pythonVersion = "3.12"
-pythonPlatform = "Linux"
-typeCheckingMode = "recommended"

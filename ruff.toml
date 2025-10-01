@@ -1,9 +1,0 @@
-extend-exclude = ["__pycache__", "*.pyc", "*.pyo", "*.pyd", "*.so", "*.egg", "*.egg-info", "dist", "build", ".git", ".pytest_cache", "venv"]
-line-length = 120
-target-version = "py312"
-
-[lint]
-ignore = ["D203", "D213"]
-
-[lint.per-file-ignores]
-"tests/*" = ["S101"]

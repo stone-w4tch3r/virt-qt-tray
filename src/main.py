@@ -1,11 +1,19 @@
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 import os
 import sys
 from collections.abc import Mapping
-from typing import TypedDict, List
-import libvirt  # type: ignore[attr-defined]  # Suppress untyped import warning
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
+from pathlib import Path
+from typing import Callable, TypedDict
+
+import libvirt  # type: ignore[reportMissingTypeStubs, attr-defined]
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+
+IS_TEST: bool = os.getenv("TEST") is not None and os.getenv("TEST") != ""
+TEST_CONNECTION = f"test://{Path('tests/libvirt-test-setup.xml').resolve()}"
+DEFAULT_CONNECTION = "qemu:///system"
 
 
 # Define typed structure for VM information
@@ -29,17 +37,16 @@ def ensure_graphical_environment(env: Mapping[str, str] | None = None) -> None:
 
 def connect_to_libvirt() -> libvirt.virConnect:
     """Establish a connection to libvirt, failing fast if unsuccessful."""
-    # conn = libvirt.open("qemu:///system")
-    conn = libvirt.open("test:///default")
+    conn = libvirt.open(TEST_CONNECTION if IS_TEST else DEFAULT_CONNECTION)
     assert conn is not None, "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
     return conn
 
 
-def get_vms(conn: libvirt.virConnect) -> List[VMInfo]:
+def get_vms(conn: libvirt.virConnect) -> list[VMInfo]:
     """Retrieve list of VMs with their statuses, using assertions for preconditions."""
     assert conn.isAlive(), "Libvirt connection is not alive."
     domains = conn.listAllDomains()
-    vms: List[VMInfo] = []
+    vms: list[VMInfo] = []
     for domain in domains:
         status = "running" if domain.isActive() else "shut off"
         vms.append(VMInfo(name=domain.name(), status=status, domain=domain))
@@ -52,7 +59,7 @@ def start_vm(domain: libvirt.virDomain) -> None:
     try:
         domain.create()
     except libvirt.libvirtError as e:
-        QMessageBox.critical(None, "Error", f"Failed to start VM: {str(e)}")
+        _ = QMessageBox.critical(None, "Error", f"Failed to start VM: {str(e)}")
 
 
 def stop_vm(domain: libvirt.virDomain) -> None:
@@ -61,30 +68,48 @@ def stop_vm(domain: libvirt.virDomain) -> None:
         if domain.isActive():
             domain.destroy()
     except libvirt.libvirtError as e:
-        QMessageBox.critical(None, "Error", f"Failed to stop VM: {str(e)}")
+        _ = QMessageBox.critical(None, "Error", f"Failed to stop VM: {str(e)}")
 
 
-def build_menu(vms: List[VMInfo]) -> QMenu:
+def _make_trigger(handler: Callable[[libvirt.virDomain], None], domain: libvirt.virDomain) -> Callable[[bool], None]:
+    def trigger(_checked: bool) -> None:
+        handler(domain)
+
+    return trigger
+
+
+def build_menu(vms: list[VMInfo]) -> QMenu:
     """Build dynamic QMenu with VM names, statuses, and actions."""
     menu = QMenu()
     for vm in vms:
         # Create submenu for each VM
         vm_menu = menu.addMenu(f"{vm['name']} ({vm['status']})")
+        assert vm_menu is not None, "Failed to create VM submenu"
 
         if vm["status"] == "shut off":
             start_action = vm_menu.addAction("Start")
-            start_action.triggered.connect(lambda _, d=vm["domain"]: start_vm(d))  # type: ignore[attr-defined]
+            assert start_action is not None, "Failed to create start action"
+            _ = start_action.triggered.connect(_make_trigger(start_vm, vm["domain"]))
         elif vm["status"] == "running":
             stop_action = vm_menu.addAction("Stop")
-            stop_action.triggered.connect(lambda _, d=vm["domain"]: stop_vm(d))  # type: ignore[attr-defined]
+            assert stop_action is not None, "Failed to create stop action"
+            _ = stop_action.triggered.connect(_make_trigger(stop_vm, vm["domain"]))
 
     if not vms:
-        menu.addAction("No VMs found")
+        placeholder = menu.addAction("No VMs found")
+        assert placeholder is not None, "Failed to create placeholder action"
 
     # Add quit action at the bottom
-    menu.addSeparator()
+    _ = menu.addSeparator()
     quit_action = menu.addAction("Quit")
-    quit_action.triggered.connect(QApplication.instance().quit)  # type: ignore[attr-defined]
+    assert quit_action is not None, "Failed to create quit action"
+
+    def handle_quit(_checked: bool) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    _ = quit_action.triggered.connect(handle_quit)
 
     return menu
 
@@ -111,7 +136,7 @@ def main() -> None:
             menu = build_menu(vms)
             tray.setContextMenu(menu)
         except Exception as e:  # Graceful handling of unexpected errors
-            QMessageBox.critical(None, "Error", f"Failed to update VM status: {str(e)}")
+            _ = QMessageBox.critical(None, "Error", f"Failed to update VM status: {str(e)}")
 
     # Initial menu setup
     update_menu()
@@ -119,7 +144,7 @@ def main() -> None:
     # Set up polling with QTimer (every 10 seconds)
     # Comment: QTimer is used for periodic updates without blocking the Qt event loop.
     timer = QTimer()
-    timer.timeout.connect(update_menu)  # type: ignore[attr-defined]
+    _ = timer.timeout.connect(update_menu)  # type: ignore[attr-defined]
     timer.start(10000)  # 10 seconds
 
     # Comment: Libvirt event handling could be added here for more efficiency, but polling is simple and sufficient for minimalism.
