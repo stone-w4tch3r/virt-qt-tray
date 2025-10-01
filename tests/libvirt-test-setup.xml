@@ -1,0 +1,36 @@
+<node>
+    <domain type="qemu">
+        <name>qemu-vm</name>  <!-- This will be the one we start (ON) -->
+        <uuid>4dea24b5-d6a8-4144-aeb1-3a8d2a083be3</uuid>
+        <memory unit="KiB">524288</memory>
+        <vcpu>1</vcpu>
+        <os>
+            <type arch="x86_64" machine="pc">hvm</type>
+            <boot dev="hd" />
+        </os>
+        <devices>
+            <emulator>/usr/bin/qemu-system-x86_64</emulator>  <!-- Mock emulator path -->
+            <disk type="file" device="disk">
+                <source file="/tmp/qemu-vm.img" />
+                <target dev="vda" bus="virtio" />
+            </disk>
+        </devices>
+    </domain>
+    <domain type="kvm">
+        <name>libvirt-vm</name>  <!-- This will remain OFF -->
+        <uuid>4dea24b5-d6a8-4144-aeb1-3a8d2a083be4</uuid>
+        <memory unit="KiB">524288</memory>
+        <vcpu>1</vcpu>
+        <os>
+            <type arch="x86_64" machine="pc">hvm</type>
+            <boot dev="hd" />
+        </os>
+        <devices>
+            <emulator>/usr/bin/qemu-system-x86_64</emulator>  <!-- Mock emulator path -->
+            <disk type="file" device="disk">
+                <source file="/tmp/libvirt-vm.img" />
+                <target dev="vda" bus="virtio" />
+            </disk>
+        </devices>
+    </domain>
+</node>

@@ -37,6 +37,7 @@ sudo dnf install uv gcc libvirt-devel -y # and maybe smth else
 ```bash
 uv sync
 uv run src/main.py
+TEST=1 uv run src/main.py # use fake libvirt connection
 ```
 
 
