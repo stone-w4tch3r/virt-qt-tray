@@ -5,7 +5,7 @@ from typing import TypedDict, List
 import libvirt  # type: ignore[attr-defined]  # Suppress untyped import warning
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QIcon
 
 
 # Define typed structure for VM information
@@ -20,9 +20,7 @@ def ensure_graphical_environment(env: Mapping[str, str] | None = None) -> None:
     vars_to_check = env if env is not None else os.environ
     has_x11 = bool(vars_to_check.get("DISPLAY"))
     has_wayland = bool(vars_to_check.get("WAYLAND_DISPLAY"))
-    assert (
-        has_x11 or has_wayland
-    ), (
+    assert has_x11 or has_wayland, (
         "No graphical display detected. Run inside an X11/Wayland session or enable X forwarding (e.g. ssh -X).\n"
         "Hint: in headless session you can point QT to real screen (find values in graphical session):\n"
         "`export DISPLAY=:0; export WAYLAND_DISPLAY=wayland-0; export XDG_SESSION_TYPE=wayland`"
@@ -33,9 +31,7 @@ def connect_to_libvirt() -> libvirt.virConnect:
     """Establish a connection to libvirt, failing fast if unsuccessful."""
     # conn = libvirt.open("qemu:///system")
     conn = libvirt.open("test:///default")
-    assert (
-        conn is not None
-    ), "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
+    assert conn is not None, "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
     return conn
 
 
@@ -76,22 +72,19 @@ def build_menu(vms: List[VMInfo]) -> QMenu:
         vm_menu = menu.addMenu(f"{vm['name']} ({vm['status']})")
 
         if vm["status"] == "shut off":
-            start_action = QAction("Start", None)
+            start_action = vm_menu.addAction("Start")
             start_action.triggered.connect(lambda _, d=vm["domain"]: start_vm(d))  # type: ignore[attr-defined]
-            vm_menu.addAction(start_action)
         elif vm["status"] == "running":
-            stop_action = QAction("Stop", None)
+            stop_action = vm_menu.addAction("Stop")
             stop_action.triggered.connect(lambda _, d=vm["domain"]: stop_vm(d))  # type: ignore[attr-defined]
-            vm_menu.addAction(stop_action)
 
     if not vms:
-        menu.addAction(QAction("No VMs found", None))
+        menu.addAction("No VMs found")
 
     # Add quit action at the bottom
     menu.addSeparator()
-    quit_action = QAction("Quit", None)
+    quit_action = menu.addAction("Quit")
     quit_action.triggered.connect(QApplication.instance().quit)  # type: ignore[attr-defined]
-    menu.addAction(quit_action)
 
     return menu
 
@@ -102,14 +95,10 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     # Fail fast: Ensure tray is supported
-    assert (
-        QSystemTrayIcon.isSystemTrayAvailable()
-    ), "System tray is not available on this platform."
+    assert QSystemTrayIcon.isSystemTrayAvailable(), "System tray is not available on this platform."
 
     tray = QSystemTrayIcon()
-    tray.setIcon(
-        QIcon.fromTheme("virtual-machine")
-    )  # Use system theme icon; falls back gracefully
+    tray.setIcon(QIcon.fromTheme("virtual-machine"))  # Use system theme icon; falls back gracefully
     tray.setVisible(True)
 
     # Establish libvirt connection early
