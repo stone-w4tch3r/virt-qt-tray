@@ -72,9 +72,7 @@ def connect_to_libvirt() -> libvirt.virConnect:
         "Libvirt connection opened",
         extra={"endpoint": TEST_CONNECTION if IS_TEST else DEFAULT_CONNECTION},
     )
-    assert (
-        conn is not None
-    ), "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
+    assert conn is not None, "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
     return conn
 
 
@@ -91,9 +89,7 @@ def _get_vms_sync(conn: libvirt.virConnect) -> list[VMInfo]:
     return vms
 
 
-async def get_vms(
-    conn: libvirt.virConnect, executor: ThreadPoolExecutor
-) -> list[VMInfo]:
+async def get_vms(conn: libvirt.virConnect, executor: ThreadPoolExecutor) -> list[VMInfo]:
     """Retrieve list of VMs asynchronously without blocking the event loop."""
     loop = asyncio.get_running_loop()
     vms = await loop.run_in_executor(executor, _get_vms_sync, conn)
@@ -159,9 +155,7 @@ def resolve_tray_icon(app: QApplication) -> QIcon:
             if not file_icon.isNull():
                 LOGGER.info("Using icon from path override", extra={"path": str(path)})
                 return file_icon
-            LOGGER.warning(
-                "Path override exists but icon is null", extra={"path": str(path)}
-            )
+            LOGGER.warning("Path override exists but icon is null", extra={"path": str(path)})
 
     icon_candidates = [
         os.getenv("VM_TRAY_ICON_NAME"),
@@ -184,9 +178,7 @@ def resolve_tray_icon(app: QApplication) -> QIcon:
         if not asset_icon.isNull():
             LOGGER.info("Using bundled asset icon", extra={"path": str(BASE_ICON_FILE)})
             return asset_icon
-        LOGGER.warning(
-            "Bundled asset icon missing or invalid", extra={"path": str(BASE_ICON_FILE)}
-        )
+        LOGGER.warning("Bundled asset icon missing or invalid", extra={"path": str(BASE_ICON_FILE)})
 
     style = app.style()
     if style is not None:
@@ -220,11 +212,7 @@ def icon_with_running_indicator(base_icon: QIcon, app: QApplication) -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     palette = app.palette() if app else None
-    highlight = (
-        palette.color(QPalette.ColorRole.Highlight)
-        if palette is not None
-        else QColor(Qt.GlobalColor.green)
-    )
+    highlight = palette.color(QPalette.ColorRole.Highlight) if palette is not None else QColor(Qt.GlobalColor.green)
     color = QColor(highlight)
     color.setAlpha(230)
     painter.setBrush(color)
@@ -247,15 +235,11 @@ def build_menu(vms: list[VMInfo], executor: ThreadPoolExecutor) -> QMenu:
         if vm["status"] == "shut off":
             start_action = vm_menu.addAction("Start")
             assert start_action is not None, "Failed to create start action"
-            start_action.triggered.connect(
-                _make_async_trigger(start_vm, vm["domain"], executor)
-            )
+            start_action.triggered.connect(_make_async_trigger(start_vm, vm["domain"], executor))
         elif vm["status"] == "running":
             stop_action = vm_menu.addAction("Stop")
             assert stop_action is not None, "Failed to create stop action"
-            stop_action.triggered.connect(
-                _make_async_trigger(stop_vm, vm["domain"], executor)
-            )
+            stop_action.triggered.connect(_make_async_trigger(stop_vm, vm["domain"], executor))
 
     if not vms:
         placeholder = menu.addAction("No VMs found")
@@ -293,9 +277,7 @@ async def periodic_menu_update(
             tray.setContextMenu(menu)
             any_running = any(vm["status"] == "running" for vm in vms)
             tray.setIcon(running_icon if any_running else base_icon)
-            LOGGER.info(
-                "Menu updated", extra={"running": any_running, "vm_count": len(vms)}
-            )
+            LOGGER.info("Menu updated", extra={"running": any_running, "vm_count": len(vms)})
         except Exception:
             tray.setIcon(base_icon)
             QMessageBox.critical(None, "Error", "Failed to update VM status")
@@ -316,9 +298,7 @@ async def async_main() -> None:
     assert app is not None, "QApplication instance not found"
 
     # Fail fast: Ensure tray is supported
-    assert (
-        QSystemTrayIcon.isSystemTrayAvailable()
-    ), "System tray is not available on this platform."
+    assert QSystemTrayIcon.isSystemTrayAvailable(), "System tray is not available on this platform."
 
     tray = QSystemTrayIcon()
     base_icon = resolve_tray_icon(app)
@@ -341,16 +321,12 @@ async def async_main() -> None:
         tray.setContextMenu(menu)
         any_running = any(vm["status"] == "running" for vm in vms)
         tray.setIcon(running_icon if any_running else base_icon)
-        LOGGER.info(
-            "Initial menu set", extra={"running": any_running, "vm_count": len(vms)}
-        )
+        LOGGER.info("Initial menu set", extra={"running": any_running, "vm_count": len(vms)})
     except Exception:
         LOGGER.exception("Failed to set initial menu")
 
     # Start periodic update task
-    update_task = asyncio.create_task(
-        periodic_menu_update(tray, conn, base_icon, running_icon, executor)
-    )
+    update_task = asyncio.create_task(periodic_menu_update(tray, conn, base_icon, running_icon, executor))
     LOGGER.debug(
         "Periodic update task started",
         extra={"interval_seconds": POLL_INTERVAL_SECONDS},

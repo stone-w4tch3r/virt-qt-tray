@@ -1,12 +1,13 @@
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportInvalidCast=false
+# pyright: reportMissingTypeStubs=false
 
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
-from pathlib import Path
 import libvirt  # type: ignore[reportMissingTypeStubs]
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPalette, QPixmap
@@ -83,24 +84,67 @@ class ConnectToLibvirtTests(unittest.TestCase):
                 _ = main.connect_to_libvirt()
 
 
-class GetVmsTests(unittest.TestCase):
-    def test_requires_alive_connection(self) -> None:
+class GetVmsTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+    async def asyncTearDown(self) -> None:
+        self.executor.shutdown(wait=False)
+
+    async def test_requires_alive_connection(self) -> None:
         conn = cast(libvirt.virConnect, DummyConnection(alive=False, domains=[]))
 
         with self.assertRaises(AssertionError):
-            _ = main.get_vms(conn)
+            _ = await main.get_vms(conn, self.executor)
+
+    async def test_retrieves_vm_list(self) -> None:
+        running = DummyDomain("vm-running", active=True)
+        stopped = DummyDomain("vm-stopped", active=False)
+        conn = cast(
+            libvirt.virConnect,
+            DummyConnection(
+                alive=True,
+                domains=[
+                    cast(libvirt.virDomain, running),
+                    cast(libvirt.virDomain, stopped),
+                ],
+            ),
+        )
+
+        vms = await main.get_vms(conn, self.executor)
+
+        self.assertEqual(len(vms), 2)
+        self.assertEqual(vms[0]["name"], "vm-running")
+        self.assertEqual(vms[0]["status"], "running")
+        self.assertEqual(vms[1]["name"], "vm-stopped")
+        self.assertEqual(vms[1]["status"], "shut off")
 
 
 class BuildMenuTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+    def tearDown(self) -> None:
+        self.executor.shutdown(wait=False)
+
     def test_submenus_reflect_vm_status(self) -> None:
         running = DummyDomain("vm-running", active=True)
         stopped = DummyDomain("vm-stopped", active=False)
 
         menu = main.build_menu(
             [
-                main.VMInfo(name="vm-running", status="running", domain=cast(libvirt.virDomain, running)),
-                main.VMInfo(name="vm-stopped", status="shut off", domain=cast(libvirt.virDomain, stopped)),
-            ]
+                main.VMInfo(
+                    name="vm-running",
+                    status="running",
+                    domain=cast(libvirt.virDomain, running),
+                ),
+                main.VMInfo(
+                    name="vm-stopped",
+                    status="shut off",
+                    domain=cast(libvirt.virDomain, stopped),
+                ),
+            ],
+            self.executor,
         )
 
         actions = list(menu.actions())
@@ -122,35 +166,56 @@ class BuildMenuTests(unittest.TestCase):
         self.assertEqual(len(quit_actions), 1)
 
     def test_shows_placeholder_when_no_vms(self) -> None:
-        menu = main.build_menu([])
+        menu = main.build_menu([], self.executor)
         texts = [action.text() for action in menu.actions() if not action.isSeparator()]
         self.assertIn("No VMs found", texts)
 
 
-class StartVmTests(unittest.TestCase):
-    def test_reports_libvirt_error(self) -> None:
+class StartVmTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+    async def asyncTearDown(self) -> None:
+        self.executor.shutdown(wait=False)
+
+    async def test_calls_domain_create(self) -> None:
+        domain = DummyDomain("test", active=False)
+
+        await main.start_vm(cast(libvirt.virDomain, domain), self.executor)
+
+        self.assertEqual(domain.start_calls, 1)
+        self.assertTrue(domain._active)
+
+    async def test_reports_libvirt_error(self) -> None:
         domain = DummyDomain("test", active=False)
         domain.raise_on_create = libvirt.libvirtError("boom")
 
         with patch("src.main.QMessageBox.critical") as mocked_message:
-            main.start_vm(cast(libvirt.virDomain, domain))
+            await main.start_vm(cast(libvirt.virDomain, domain), self.executor)
 
         mocked_message.assert_called_once()
         self.assertEqual(domain.start_calls, 1)
 
 
-class StopVmTests(unittest.TestCase):
-    def test_destroy_called_when_active(self) -> None:
+class StopVmTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=2)
+
+    async def asyncTearDown(self) -> None:
+        self.executor.shutdown(wait=False)
+
+    async def test_destroy_called_when_active(self) -> None:
         domain = DummyDomain("active", active=True)
 
-        main.stop_vm(cast(libvirt.virDomain, domain))
+        await main.stop_vm(cast(libvirt.virDomain, domain), self.executor)
 
         self.assertEqual(domain.destroy_calls, 1)
+        self.assertFalse(domain._active)
 
-    def test_destroy_not_called_when_inactive(self) -> None:
+    async def test_destroy_not_called_when_inactive(self) -> None:
         domain = DummyDomain("inactive", active=False)
 
-        main.stop_vm(cast(libvirt.virDomain, domain))
+        await main.stop_vm(cast(libvirt.virDomain, domain), self.executor)
 
         self.assertEqual(domain.destroy_calls, 0)
 
