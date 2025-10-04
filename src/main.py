@@ -1,22 +1,25 @@
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
-
+import asyncio
 import logging
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, TypedDict
 
 import libvirt  # type: ignore[reportMissingTypeStubs, attr-defined]
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QStyle, QSystemTrayIcon
+from PyQt6.QtWidgets import QMenu, QMessageBox, QStyle, QSystemTrayIcon
+from qasync import QApplication, QEventLoop, asyncSlot
+
 
 IS_TEST: bool = os.getenv("TEST") is not None and os.getenv("TEST") != ""
 TEST_CONNECTION = f"test://{Path('tests/libvirt-test-setup.xml').resolve()}"
 DEFAULT_CONNECTION = "qemu:///system"
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BASE_ICON_FILE = ASSETS_DIR / "vm_tray_base.svg"
+POLL_INTERVAL_SECONDS: int = 10
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ class VMInfo(TypedDict):
 
 
 def configure_logging() -> None:
-    level_name = os.getenv("VM_TRAY_LOG_LEVEL", "INFO").upper()
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = logging.getLevelName(level_name)
     if not isinstance(level, int):
         level = logging.INFO
@@ -51,7 +54,9 @@ def ensure_graphical_environment(env: Mapping[str, str] | None = None) -> None:
     has_x11 = bool(vars_to_check.get("DISPLAY"))
     has_wayland = bool(vars_to_check.get("WAYLAND_DISPLAY"))
     LOGGER.debug(
-        "Detected DISPLAY=%s WAYLAND_DISPLAY=%s", vars_to_check.get("DISPLAY"), vars_to_check.get("WAYLAND_DISPLAY")
+        "Detected DISPLAY=%s WAYLAND_DISPLAY=%s",
+        vars_to_check.get("DISPLAY"),
+        vars_to_check.get("WAYLAND_DISPLAY"),
     )
     assert has_x11 or has_wayland, (
         "No graphical display detected. Run inside an X11/Wayland session or enable X forwarding (e.g. ssh -X).\n"
@@ -63,13 +68,18 @@ def ensure_graphical_environment(env: Mapping[str, str] | None = None) -> None:
 def connect_to_libvirt() -> libvirt.virConnect:
     """Establish a connection to libvirt, failing fast if unsuccessful."""
     conn = libvirt.open(TEST_CONNECTION if IS_TEST else DEFAULT_CONNECTION)
-    LOGGER.info("Libvirt connection opened", extra={"endpoint": TEST_CONNECTION if IS_TEST else DEFAULT_CONNECTION})
-    assert conn is not None, "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
+    LOGGER.info(
+        "Libvirt connection opened",
+        extra={"endpoint": TEST_CONNECTION if IS_TEST else DEFAULT_CONNECTION},
+    )
+    assert (
+        conn is not None
+    ), "Failed to open libvirt connection. Ensure libvirtd is running and permissions are set."
     return conn
 
 
-def get_vms(conn: libvirt.virConnect) -> list[VMInfo]:
-    """Retrieve list of VMs with their statuses, using assertions for preconditions."""
+def _get_vms_sync(conn: libvirt.virConnect) -> list[VMInfo]:
+    """Synchronous VM retrieval - runs in executor to avoid blocking event loop."""
     assert conn.isAlive(), "Libvirt connection is not alive."
     LOGGER.debug("Fetching domains from libvirt")
     domains = conn.listAllDomains()
@@ -78,36 +88,63 @@ def get_vms(conn: libvirt.virConnect) -> list[VMInfo]:
         status = "running" if domain.isActive() else "shut off"
         vms.append(VMInfo(name=domain.name(), status=status, domain=domain))
     LOGGER.info("Retrieved %s VM(s)", len(vms))
-    # Postcondition: Ensure we have at least one VM or handle empty list gracefully in UI
     return vms
 
 
-def start_vm(domain: libvirt.virDomain) -> None:
-    """Start a VM, handling errors gracefully."""
+async def get_vms(
+    conn: libvirt.virConnect, executor: ThreadPoolExecutor
+) -> list[VMInfo]:
+    """Retrieve list of VMs asynchronously without blocking the event loop."""
+    loop = asyncio.get_running_loop()
+    vms = await loop.run_in_executor(executor, _get_vms_sync, conn)
+    return vms
+
+
+def _start_vm_sync(domain: libvirt.virDomain) -> None:
+    """Synchronous VM start - runs in executor."""
+    LOGGER.info("Starting VM", extra={"vm": domain.name()})
+    domain.create()
+    LOGGER.debug("VM start completed", extra={"vm": domain.name()})
+
+
+async def start_vm(domain: libvirt.virDomain, executor: ThreadPoolExecutor) -> None:
+    """Start a VM asynchronously, handling errors gracefully."""
     try:
-        LOGGER.info("Starting VM", extra={"vm": domain.name()})
-        domain.create()
-        LOGGER.debug("VM start requested", extra={"vm": domain.name()})
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(executor, _start_vm_sync, domain)
     except libvirt.libvirtError as e:
         QMessageBox.critical(None, "Error", f"Failed to start VM: {str(e)}")
         LOGGER.exception("Failed to start VM", extra={"vm": domain.name()})
 
 
-def stop_vm(domain: libvirt.virDomain) -> None:
-    """Stop a VM, handling errors gracefully."""
+def _stop_vm_sync(domain: libvirt.virDomain) -> None:
+    """Synchronous VM stop - runs in executor."""
+    if domain.isActive():
+        LOGGER.info("Stopping VM", extra={"vm": domain.name()})
+        domain.destroy()
+        LOGGER.debug("VM stop completed", extra={"vm": domain.name()})
+
+
+async def stop_vm(domain: libvirt.virDomain, executor: ThreadPoolExecutor) -> None:
+    """Stop a VM asynchronously, handling errors gracefully."""
     try:
-        if domain.isActive():
-            LOGGER.info("Stopping VM", extra={"vm": domain.name()})
-            domain.destroy()
-            LOGGER.debug("VM stop requested", extra={"vm": domain.name()})
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(executor, _stop_vm_sync, domain)
     except libvirt.libvirtError as e:
         QMessageBox.critical(None, "Error", f"Failed to stop VM: {str(e)}")
         LOGGER.exception("Failed to stop VM", extra={"vm": domain.name()})
 
 
-def _make_trigger(handler: Callable[[libvirt.virDomain], None], domain: libvirt.virDomain) -> Callable[[bool], None]:
-    def trigger(_checked: bool) -> None:
-        handler(domain)
+def _make_async_trigger(
+    handler: Callable[[libvirt.virDomain, ThreadPoolExecutor], Awaitable[None]],
+    domain: libvirt.virDomain,
+    executor: ThreadPoolExecutor,
+) -> Callable[[bool], None]:
+    """Create a slot trigger that schedules async handler without blocking."""
+
+    @asyncSlot()
+    async def trigger(_checked: bool) -> None:
+        await handler(domain, executor)
 
     return trigger
 
@@ -122,7 +159,9 @@ def resolve_tray_icon(app: QApplication) -> QIcon:
             if not file_icon.isNull():
                 LOGGER.info("Using icon from path override", extra={"path": str(path)})
                 return file_icon
-            LOGGER.warning("Path override exists but icon is null", extra={"path": str(path)})
+            LOGGER.warning(
+                "Path override exists but icon is null", extra={"path": str(path)}
+            )
 
     icon_candidates = [
         os.getenv("VM_TRAY_ICON_NAME"),
@@ -145,7 +184,9 @@ def resolve_tray_icon(app: QApplication) -> QIcon:
         if not asset_icon.isNull():
             LOGGER.info("Using bundled asset icon", extra={"path": str(BASE_ICON_FILE)})
             return asset_icon
-        LOGGER.warning("Bundled asset icon missing or invalid", extra={"path": str(BASE_ICON_FILE)})
+        LOGGER.warning(
+            "Bundled asset icon missing or invalid", extra={"path": str(BASE_ICON_FILE)}
+        )
 
     style = app.style()
     if style is not None:
@@ -179,7 +220,11 @@ def icon_with_running_indicator(base_icon: QIcon, app: QApplication) -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     palette = app.palette() if app else None
-    highlight = palette.color(QPalette.ColorRole.Highlight) if palette is not None else QColor(Qt.GlobalColor.green)
+    highlight = (
+        palette.color(QPalette.ColorRole.Highlight)
+        if palette is not None
+        else QColor(Qt.GlobalColor.green)
+    )
     color = QColor(highlight)
     color.setAlpha(230)
     painter.setBrush(color)
@@ -192,29 +237,31 @@ def icon_with_running_indicator(base_icon: QIcon, app: QApplication) -> QIcon:
     return QIcon(pixmap)
 
 
-def build_menu(vms: list[VMInfo]) -> QMenu:
-    """Build dynamic QMenu with VM names, statuses, and actions."""
+def build_menu(vms: list[VMInfo], executor: ThreadPoolExecutor) -> QMenu:
+    """Build dynamic QMenu with VM names, statuses, and async actions."""
     menu = QMenu()
     for vm in vms:
-        # Create submenu for each VM
         vm_menu = menu.addMenu(f"{vm['name']} ({vm['status']})")
         assert vm_menu is not None, "Failed to create VM submenu"
 
         if vm["status"] == "shut off":
             start_action = vm_menu.addAction("Start")
             assert start_action is not None, "Failed to create start action"
-            start_action.triggered.connect(_make_trigger(start_vm, vm["domain"]))
+            start_action.triggered.connect(
+                _make_async_trigger(start_vm, vm["domain"], executor)
+            )
         elif vm["status"] == "running":
             stop_action = vm_menu.addAction("Stop")
             assert stop_action is not None, "Failed to create stop action"
-            stop_action.triggered.connect(_make_trigger(stop_vm, vm["domain"]))
+            stop_action.triggered.connect(
+                _make_async_trigger(stop_vm, vm["domain"], executor)
+            )
 
     if not vms:
         placeholder = menu.addAction("No VMs found")
         assert placeholder is not None, "Failed to create placeholder action"
         LOGGER.info("No VMs found during menu build")
 
-    # Add quit action at the bottom
     menu.addSeparator()
     quit_action = menu.addAction("Quit")
     assert quit_action is not None, "Failed to create quit action"
@@ -230,54 +277,112 @@ def build_menu(vms: list[VMInfo]) -> QMenu:
     return menu
 
 
-def main() -> None:
+async def periodic_menu_update(
+    tray: QSystemTrayIcon,
+    conn: libvirt.virConnect,
+    base_icon: QIcon,
+    running_icon: QIcon,
+    executor: ThreadPoolExecutor,
+) -> None:
+    """Periodically update the tray menu without blocking the event loop."""
+    while True:
+        try:
+            LOGGER.debug("Refreshing tray menu")
+            vms = await get_vms(conn, executor)
+            menu = build_menu(vms, executor)
+            tray.setContextMenu(menu)
+            any_running = any(vm["status"] == "running" for vm in vms)
+            tray.setIcon(running_icon if any_running else base_icon)
+            LOGGER.info(
+                "Menu updated", extra={"running": any_running, "vm_count": len(vms)}
+            )
+        except Exception:
+            tray.setIcon(base_icon)
+            QMessageBox.critical(None, "Error", "Failed to update VM status")
+            LOGGER.exception("Failed to refresh tray menu")
+
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+async def async_main() -> None:
+    """Main async entry point for the application."""
     configure_logging()
     LOGGER.info("VM tray starting")
     ensure_graphical_environment()
 
-    app = QApplication(sys.argv)
+    print("-----Test mode-----" if IS_TEST else "Production mode")
+
+    app = QApplication.instance()
+    assert app is not None, "QApplication instance not found"
 
     # Fail fast: Ensure tray is supported
-    assert QSystemTrayIcon.isSystemTrayAvailable(), "System tray is not available on this platform."
+    assert (
+        QSystemTrayIcon.isSystemTrayAvailable()
+    ), "System tray is not available on this platform."
 
     tray = QSystemTrayIcon()
     base_icon = resolve_tray_icon(app)
     running_icon = icon_with_running_indicator(base_icon, app)
     tray.setIcon(base_icon)
     tray.setVisible(True)
-    LOGGER.info("Tray icon initialised")
+    LOGGER.info("Tray icon initialized")
 
-    # Establish libvirt connection early
+    # Establish libvirt connection
     conn = connect_to_libvirt()
 
-    # Function to update menu on poll
-    def update_menu() -> None:
-        try:
-            LOGGER.debug("Refreshing tray menu")
-            vms = get_vms(conn)
-            menu = build_menu(vms)
-            tray.setContextMenu(menu)
-            any_running = any(vm["status"] == "running" for vm in vms)
-            tray.setIcon(running_icon if any_running else base_icon)
-            LOGGER.info("Menu updated", extra={"running": any_running, "vm_count": len(vms)})
-        except Exception as e:  # Graceful handling of unexpected errors
-            tray.setIcon(base_icon)
-            QMessageBox.critical(None, "Error", f"Failed to update VM status: {str(e)}")
-            LOGGER.exception("Failed to refresh tray menu")
+    # Create thread pool executor for blocking libvirt calls
+    executor = ThreadPoolExecutor(max_workers=4)
+    LOGGER.debug("ThreadPoolExecutor initialized", extra={"max_workers": 4})
 
     # Initial menu setup
-    update_menu()
+    try:
+        vms = await get_vms(conn, executor)
+        menu = build_menu(vms, executor)
+        tray.setContextMenu(menu)
+        any_running = any(vm["status"] == "running" for vm in vms)
+        tray.setIcon(running_icon if any_running else base_icon)
+        LOGGER.info(
+            "Initial menu set", extra={"running": any_running, "vm_count": len(vms)}
+        )
+    except Exception:
+        LOGGER.exception("Failed to set initial menu")
 
-    # Set up polling with QTimer (every 10 seconds)
-    # Comment: QTimer is used for periodic updates without blocking the Qt event loop.
-    timer = QTimer()
-    timer.timeout.connect(update_menu)  # type: ignore[attr-defined]
-    timer.start(10000)  # 10 seconds
-    LOGGER.debug("Polling timer started", extra={"interval_ms": 10000})
+    # Start periodic update task
+    update_task = asyncio.create_task(
+        periodic_menu_update(tray, conn, base_icon, running_icon, executor)
+    )
+    LOGGER.debug(
+        "Periodic update task started",
+        extra={"interval_seconds": POLL_INTERVAL_SECONDS},
+    )
 
-    # Comment: Libvirt event handling could be added here for more efficiency, but polling is simple and sufficient for minimalism.
+    # Wait for app quit signal
+    app_close_event = asyncio.Event()
+    app.aboutToQuit.connect(app_close_event.set)  # type: ignore[attr-defined]
 
-    sys.exit(app.exec())
+    await app_close_event.wait()
+
+    # Cleanup
+    update_task.cancel()
+    try:
+        await update_task
+    except asyncio.CancelledError:
+        pass
+    executor.shutdown(wait=True)
+    conn.close()
+    LOGGER.info("VM tray shutting down")
+
+
+def main() -> None:
+    """Entry point that sets up qasync event loop and runs async main."""
+    app = QApplication(sys.argv)
+
+    # Modern Python 3.11+ approach with qasync
+    try:
+        asyncio.run(async_main(), loop_factory=lambda: QEventLoop(app))
+    except KeyboardInterrupt:
+        LOGGER.info("Interrupted by user")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

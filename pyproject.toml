@@ -5,7 +5,7 @@ description = "A minimal system tray app for monitoring and controlling libvirt-
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 license = "MIT"
 requires-python = ">=3.12"
-dependencies = ["PyQt6", "libvirt-python"]
+dependencies = ["PyQt6", "libvirt-python", "qasync"]
 
 [dependency-groups]
 dev = ["pytest", "ruff", "basedpyright"]
