@@ -32,6 +32,13 @@ distrobox enter fedora-dev -- uv run src/main.py
 TEST=1 uv run src/main.py # use fake libvirt connection
 ```
 
+**Dev tools**
+```bash
+uv run ruff format # format
+uv run basedpyright # typecheck
+uv run ruff check --fix . # lint
+```
+
 ## Host Deps Installation
 
 **Ubuntu:**
